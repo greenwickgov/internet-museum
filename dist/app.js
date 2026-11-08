@@ -633,12 +633,6 @@ async function openExhibit(i) {
     '</p><span class="scroll-cue">SCROLL TO WALK THROUGH ↘</span></article><article class="room-part room-loading"><p>Unpacking the archive…</p></article>';
   try {
     if (String(i.id).startsWith("inquiry:")) {
-      const research = await webResearch(i.title);
-      if (n !== articleRequest) return;
-      if (research.results.length) {
-        content.innerHTML = await researchRoom(i, research);
-        return;
-      }
       const lead = await wikipediaLead(i.title);
       if (n !== articleRequest) return;
       if (lead) {
@@ -653,6 +647,8 @@ async function openExhibit(i) {
         });
         return;
       }
+      const research = await webResearch(i.title);
+      if (n !== articleRequest) return;
       content.innerHTML = await researchRoom(i, research);
       return;
     }
