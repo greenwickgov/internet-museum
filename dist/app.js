@@ -1,54 +1,853 @@
-'use strict';
-const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const wiki=t=>'https://en.wikipedia.org/wiki/'+encodeURIComponent(t.replaceAll(' ','_'));
-const openverse=t=>'https://openverse.org/search/image?q='+encodeURIComponent(t);
-const googleSearch=t=>'https://www.google.com/search?q='+encodeURIComponent(t);
-const RESEARCH_URL='https://internet-museum-research.onrender.com/search';
-let state;try{state=JSON.parse(localStorage.getItem('internet-museum-v2'))}catch{}state={saved:[],seen:[],queries:[],discoveries:[],threads:[],scores:{},paused:false,...(state||{})};
-let wing='All exhibits',results=null,limit=16,request=0,articleRequest=0;const cache=new Map(),tones=['#e4d6ff','#c7ebc3','#f7c9d7','#b7dcff','#fae5a7','#d5e8c9'];
-const persist=()=>localStorage.setItem('internet-museum-v2',JSON.stringify(state));
-const all=()=>[...CATALOG,...state.discoveries.filter(x=>!CATALOG.some(y=>y.id===x.id))];
-async function api(params){const u=new URL('https://en.wikipedia.org/w/api.php');u.search=new URLSearchParams({action:'query',format:'json',formatversion:'2',origin:'*',...params});const r=await fetch(u,{signal:AbortSignal.timeout(15000)});if(!r.ok)throw Error('Wikipedia unavailable');return r.json()}
-function addScore(topic,n=1){if(state.paused)return;state.scores[topic]=(state.scores[topic]||0)+n}
-function activeItems(){let x=results||all();return x.filter(i=>wing==='All exhibits'||wing==='Discoveries'?wing==='All exhibits'||i.live:i.wing===wing)}
-function toggleSave(i){state.saved=state.saved.some(x=>x.id===i.id)?state.saved.filter(x=>x.id!==i.id):[i,...state.saved];persist();render();renderSaved()}
-function exhibit(i){const saved=state.saved.some(x=>x.id===i.id),el=document.createElement('article');el.className='exhibit';el.innerHTML='<div class="exhibit-art" style="--tone:'+esc(i.tone||tones[(i.title.length)%tones.length])+'"><span class="glyph">'+esc(i.glyph||'∞')+'</span><span class="year">'+esc(i.year||'LIVE')+'</span><span class="ticket">'+(i.live?'NEW THREAD':'EXHIBIT')+'</span></div><button class="open-exhibit"><span class="tag">'+esc(i.wing)+'</span><h3>'+esc(i.title)+'</h3><p>'+esc(i.description)+'</p></button><button class="save '+(saved?'saved':'')+'" aria-label="Save '+esc(i.title)+'">'+(saved?'♥':'♡')+'</button>';el.querySelector('.open-exhibit').onclick=()=>openExhibit(i);el.querySelector('.save').onclick=()=>toggleSave(i);return el}
-function render(){const items=activeItems();$('#grid').replaceChildren(...items.slice(0,limit).map(exhibit));if(!items.length)$('#grid').innerHTML='<div class="empty">This room is still empty. Search for something unexpected.</div>';$('#loadMore').hidden=items.length<=limit;$('#filters').replaceChildren(...[...WINGS,'Discoveries'].map(w=>{const b=document.createElement('button');b.className='filter '+(wing===w?'active':'');b.textContent=w;b.onclick=()=>{wing=w;results=null;limit=16;render()};return b}));$('#savedCount').textContent=state.saved.length;$('#trailCount').textContent=state.threads.length}
-function renderSaved(){$('#savedGrid').replaceChildren(...state.saved.map(exhibit));if(!state.saved.length)$('#savedGrid').innerHTML='<div class="empty">The vault is empty. Keep a few strange things safe.</div>'}
-function recommendations(){const thread=state.threads[0],names=new Set(state.seen);const top=all().filter(i=>!names.has(i.id)).sort((a,b)=>(state.scores[b.wing]||0)-(state.scores[a.wing]||0)).slice(0,5);$('#recommendations').replaceChildren(...top.map(i=>{const b=document.createElement('button');b.className='rec';b.innerHTML='<span class="rec-glyph">'+esc((i.glyph||'∞').slice(0,4))+'</span><span><b>'+esc(i.title)+'</b><small>'+(thread?'Connected to “'+esc(thread.query)+'”':i.wing)+' · '+esc(i.year)+'</small></span><span>↗</span>';b.onclick=()=>openExhibit(i);return b}));const n=state.threads.length;$('#learningText').textContent=state.paused?'Learning is paused. Your existing map is still here.':n?'You have opened '+n+' search thread'+(n===1?'':'s')+'. The next gallery is being chosen from the ideas you keep returning to.':'Your first search will light up a path through the museum.'}
-function renderMap(){const m=$('#map'),ts=state.threads.slice(0,7);m.replaceChildren();if(!ts.length){m.innerHTML='<div class="empty" style="margin:55px 18px;color:#bfc7b5;border-color:#5a6254">Search something. The map will start to glow.</div>';return}const pts=ts.map((t,i)=>({x:[45,17,77,27,67,13,87][i],y:[48,18,22,76,73,61,47][i]}));for(let i=1;i<pts.length;i++){const a=pts[0],b=pts[i],dx=b.x-a.x,dy=b.y-a.y,line=document.createElement('i');line.className='map-line';line.style.cssText='left:'+a.x+'%;top:'+a.y+'%;width:'+Math.hypot(dx,dy)+'%;transform:rotate('+Math.atan2(dy,dx)*180/Math.PI+'deg)';m.append(line)}ts.forEach((t,i)=>{const n=document.createElement('button');n.className='map-node '+(i===0?'search':i%2?'discovery':'');n.style.left='calc('+pts[i].x+'% - 39px)';n.style.top='calc('+pts[i].y+'% - 39px)';n.textContent=t.query;n.onclick=()=>{results=t.items;wing='All exhibits';limit=16;render();$('#rooms').scrollIntoView()};m.append(n)})}
-function threadPulse(t){const p=$('#searchPulse');p.hidden=false;p.innerHTML='<div class="pulse-title">✦ SEARCH THREAD CREATED · '+esc(t.items.length)+' ROOMS FOUND</div><div class="pulse-tags">'+t.keywords.slice(0,8).map(x=>'<span>'+esc(x)+'</span>').join('')+'</div>'}
-function learnFromSearch(q,pages){const words=[q,...pages.slice(0,7).flatMap(p=>(p.title+' '+(p.description||'')).split(/[^\p{L}\p{N}]+/u)).filter(x=>x.length>3)].map(x=>x.toLowerCase()),thread={query:q,keywords:[...new Set(words)].slice(0,20),items:pages,at:Date.now()};if(!state.paused){state.threads=[thread,...state.threads.filter(x=>x.query.toLowerCase()!==q.toLowerCase())].slice(0,20);state.queries=[q,...state.queries.filter(x=>x!==q)].slice(0,50);for(const i of CATALOG){const hay=(i.title+' '+i.description+' '+i.wing).toLowerCase(),hits=thread.keywords.filter(k=>k.length>3&&hay.includes(k)).length;if(hits)addScore(i.wing,Math.min(2,hits*.35))}const known=new Map(state.discoveries.map(x=>[x.id,x]));pages.forEach(x=>{if(!CATALOG.some(y=>y.id===x.id))known.set(x.id,x)});state.discoveries=[...known.values()].slice(-400);persist()}return thread}
-async function search(e){e?.preventDefault();const q=$('#search').value.trim();if(!q)return;const n=++request;wing='All exhibits';results=null;$('#searchPulse').hidden=false;$('#searchPulse').innerHTML='<div class="pulse-title">SEARCHING THE LIVING ARCHIVE…</div>';try{const data=await api({generator:'search',gsrsearch:q,gsrnamespace:0,gsrlimit:24,prop:'description|pageimages',piprop:'thumbnail',pithumbsize:400});if(n!==request)return;const local=CATALOG.filter(x=>(x.title+' '+x.description+' '+x.wing).toLowerCase().includes(q.toLowerCase())),used=new Set(local.map(x=>x.title.toLowerCase())),live=(data.query?.pages||[]).sort((a,b)=>a.index-b.index).filter(x=>!used.has(x.title.toLowerCase())).map(p=>({id:p.title,title:p.title,glyph:'wiki',description:p.description||'A live discovery from Wikipedia.',wing:'Discoveries',live:true,tone:tones[p.title.length%tones.length]}));const inquiry={id:'inquiry:'+q.toLowerCase(),title:q,glyph:'? ',description:'Your inquiry. Enter this room to research the exact phrase you searched.',wing:'Discoveries',live:true,tone:'#d9d5ff'};results=[inquiry,...local,...live.filter(x=>x.title.toLowerCase()!==q.toLowerCase())];const t=learnFromSearch(q,results);threadPulse(t);render();renderMap();recommendations()}catch{const inquiry={id:'inquiry:'+q.toLowerCase(),title:q,glyph:'? ',description:'Your inquiry. Enter this room to research the exact phrase you searched.',wing:'Discoveries',live:true,tone:'#d9d5ff'};results=[inquiry,...CATALOG.filter(x=>(x.title+' '+x.description).toLowerCase().includes(q.toLowerCase()))];$('#searchPulse').innerHTML='<div class="pulse-title">OPENING AN ALTERNATIVE RESEARCH TRAIL…</div>';render()}}
-const mediaCache=new Map();
-async function duckInfo(query){try{const r=await fetch('https://api.duckduckgo.com/?q='+encodeURIComponent(query)+'&format=json&no_html=1&skip_disambig=1',{signal:AbortSignal.timeout(7000)});if(!r.ok)throw Error();const d=await r.json();const text=d.AbstractText||d.Answer||d.Definition||'';return text?{text,url:d.AbstractURL||('https://duckduckgo.com/?q='+encodeURIComponent(query))}:null}catch{return null}}
-async function webResearch(query){try{const r=await fetch(RESEARCH_URL+'?q='+encodeURIComponent(query)+'&format=json',{signal:AbortSignal.timeout(15000)});if(!r.ok)throw Error();const d=await r.json(),results=(d.results||[]).filter(x=>x.title&&x.url&&x.content).slice(0,10).map(x=>({title:x.title.replace(/<[^>]*>/g,''),text:x.content.replace(/<[^>]*>/g,''),url:x.url}));return {results,text:results.map(x=>x.text).join(' ')}}catch{return {results:[],text:''}}}
-async function wikipediaLead(query){try{const d=await api({generator:'search',gsrsearch:query,gsrnamespace:0,gsrlimit:1,prop:'description'}),p=(d.query?.pages||[]).sort((a,b)=>a.index-b.index)[0];return p?{id:p.title,title:p.title,glyph:'wiki',description:p.description||'A connected live discovery from your search.',wing:'Discoveries',live:true,tone:'#d9d5ff'}:null}catch{return null}}
-async function researchRoom(i,research){const media=await freeMedia(i.title),sources=research.results.slice(0,8),story=sources.map(x=>wallText(x.text)).filter(Boolean);const visual=(index)=>media[index]?.url?.startsWith('https')?' style="background-image:url(&quot;'+esc(media[index].url)+'&quot;)"':'';if(!sources.length)return '<article class="room-part room-door"><div class="room-kicker">LIVE RESEARCH DESK</div><div class="room-glyph">?</div><h1>'+esc(i.title)+'</h1><p class="room-lead">The open web did not return usable sources for this exact phrase yet.</p><span class="scroll-cue">TRY A MORE SPECIFIC TRAIL ↘</span></article><article class="room-part room-connections"><div><p class="room-label">NO INVENTED EXHIBIT</p><h2>Nothing is being made up here.</h2><p>Try adding a name, place, year, platform, or other detail. The museum will only build walls from sources it can actually find.</p></div><div class="room-actions"><a href="'+esc(googleSearch(i.title))+'" target="_blank" rel="noopener">Search Google ↗</a><a href="'+esc(wiki(i.title))+'" target="_blank" rel="noopener">Check Wikipedia ↗</a></div></article>';
-const parts=story.slice(0,7);while(parts.length<7)parts.push('This source trail is shorter than a full gallery. Open the original source to continue the research.');return '<article class="room-part room-door"><div class="room-kicker">LIVE RESEARCH DESK</div><div class="room-glyph">'+esc(i.glyph||'⌕')+'</div><h1>'+esc(i.title)+'</h1><p class="room-lead">A source-built exhibit: each wall comes from a different result.</p><span class="scroll-cue">SCROLL TO WALK THROUGH ↘</span></article><article class="room-part room-origin"><div class="room-copy"><p class="room-label">01 / FIRST LEAD</p><h2>'+esc(sources[0].title)+'</h2><p>'+esc(story[0])+'</p></div><div class="room-image room-image-placeholder">⌕</div></article>'+parts.slice(1).map((part,index)=>'<article class="room-part room-story"><div class="wall-visual"'+visual(index)+'><span>'+esc(i.glyph||'⌕')+'</span><small class="media-credit">'+(media[index]?'Openverse · '+esc(media[index].license):'Source trail '+(index+2))+'</small></div><div class="wall-copy"><div class="room-number">0'+(index+2)+'</div><div><p class="room-label">'+esc(sources[index+1]?.title||'MORE TO EXPLORE')+'</p><p class="story-text">'+esc(part)+'</p></div></div></article>').join('')+'<article class="room-part room-connections"><div><p class="room-label">THE SOURCE SHELF</p><h2>Keep researching.</h2><p>These are the pages the room was built from.</p></div><div class="room-actions">'+sources.slice(0,4).map(x=>'<a href="'+esc(x.url)+'" target="_blank" rel="noopener">'+esc(x.title.slice(0,44))+' ↗</a>').join('')+'</div></article>'}
-function fallbackRoom(i,text,url){const story=splitStory(text,i.description);return '<article class="room-part room-door"><div class="room-kicker">OUTSIDE THE WIKIPEDIA ARCHIVE</div><div class="room-glyph">'+esc(i.glyph||'∞')+'</div><h1>'+esc(i.title)+'</h1><p class="room-lead">'+esc(i.description)+'</p><span class="scroll-cue">SCROLL TO WALK THROUGH ↘</span></article><article class="room-part room-origin"><div class="room-copy"><p class="room-label">01 / DISCOVERED ON THE OPEN WEB</p><h2>A different trail.</h2><p>'+esc(story[0])+'</p></div><div class="room-image room-image-placeholder">'+esc(i.glyph||'∞')+'</div></article>'+story.slice(1,8).map((part,index)=>'<article class="room-part room-story"><div class="wall-visual"><span>'+esc(i.glyph||'∞')+'</span><small class="media-credit">Themed museum visual</small></div><div class="wall-copy"><div class="room-number">0'+(index+2)+'</div><div><p class="room-label">'+(['THE CLUE','WHY IT MATTERS','THE PEOPLE','THE TURNING POINT','THE RABBIT HOLE','STILL ECHOING','WHAT CAME NEXT'][index])+'</p><p class="story-text">'+esc(part)+'</p></div></div></article>').join('')+'<article class="room-part room-connections"><div><p class="room-label">KEEP INVESTIGATING</p><h2>The trail continues.</h2><p>This topic has no Wikipedia article, so this room was made from an open-web instant answer.</p></div><div class="room-actions"><a href="'+esc(url)+'" target="_blank" rel="noopener">Open the source ↗</a><a href="'+esc(googleSearch(i.title))+'" target="_blank" rel="noopener">Search Google ↗</a></div></article>'}
-async function freeMedia(query){if(mediaCache.has(query))return mediaCache.get(query);try{const r=await fetch('https://api.openverse.org/v1/images/?q='+encodeURIComponent(query)+'&page_size=8',{headers:{Accept:'application/json'},signal:AbortSignal.timeout(7000)});if(!r.ok)throw Error();const data=await r.json();const result=(data.results||[]).filter(x=>x.thumbnail||x.url).map(x=>({url:x.thumbnail||x.url,creator:x.creator||'Openverse contributor',license:(x.license||'open licence').toUpperCase(),source:x.foreign_landing_url||x.url}));mediaCache.set(query,result);return result}catch{mediaCache.set(query,[]);return []}}
-function learnItem(i){if(state.paused)return;state.seen=[i.id,...state.seen.filter(x=>x!==i.id)].slice(0,150);addScore(i.wing,2);persist();recommendations()}
-function themeFor(i){const s=(i.title+' '+i.wing).toLowerCase();if(/game|minecraft|twitch|roblox/.test(s))return 'arcade';if(/social|meme|youtube|emoji|myspace/.test(s))return 'social';if(/security|hack|crypto|privacy/.test(s))return 'terminal';if(/web|browser|search|wiki/.test(s))return 'web';return 'archive'}
-function splitStory(text,fallback){const clean=String(text||fallback||'').replace(/\s+/g,' ').trim();const bits=(clean.match(/[^.!?]{35,280}[.!?]+/g)||[]).map(x=>x.trim()).filter(x=>x.length>35);const walls=[];for(const bit of [fallback,...bits]){const line=wallText(bit);if(line&& !walls.includes(line))walls.push(line)}while(walls.length<8)walls.push(walls.length===1?'This is one of the ideas that shaped how people use the internet.':'Its story keeps unfolding through the people and tools connected to it.');return walls.slice(0,8)}
-function wallText(text){const first=String(text||'').match(/^.*?[.!?](?:\\s|$)/)?.[0]||String(text||'');return first.length>230?first.slice(0,227)+'…':first}
-async function openExhibit(i){learnItem(i);const room=$('#exhibitRoom'),content=$('#roomContent'),n=++articleRequest,theme=themeFor(i);room.className='exhibit-room open theme-'+theme;room.setAttribute('aria-hidden','false');document.body.classList.add('room-open');content.innerHTML='<article class="room-part room-door"><div class="room-kicker">EXHIBIT ROOM · '+esc(i.wing)+'</div><div class="room-glyph">'+esc(i.glyph||'∞')+'</div><p class="room-year">'+esc(i.year||'LIVE ARCHIVE')+'</p><h1>'+esc(i.title)+'</h1><p class="room-lead">'+esc(i.description)+'</p><span class="scroll-cue">SCROLL TO WALK THROUGH ↘</span></article><article class="room-part room-loading"><p>Unpacking the archive…</p></article>';try{if(String(i.id).startsWith('inquiry:')){const research=await webResearch(i.title);if(n!==articleRequest)return;if(research.results.length){content.innerHTML=await researchRoom(i,research);return}const lead=await wikipediaLead(i.title);if(n!==articleRequest)return;if(lead){openExhibit(lead);return}content.innerHTML=await researchRoom(i,research);return}let data=cache.get(i.title);if(!data){data=await api({titles:i.title,redirects:1,prop:'extracts|pageimages|links|categories',explaintext:1,piprop:'thumbnail',pithumbsize:1200,plnamespace:0,pllimit:16,cllimit:8});cache.set(i.title,data)}if(n!==articleRequest)return;const p=data.query?.pages?.[0];if(!p||p.missing)throw Error();const free=await freeMedia(p.title);if(n!==articleRequest)return;const story=splitStory(p.extract,i.description),related=(p.links||[]).filter(x=>!x.title.includes(':')).slice(0,12),image=p.thumbnail?.source?.startsWith('https://upload.wikimedia.org/')?'<img class="room-image" src="'+esc(p.thumbnail.source)+'" alt="">':'<div class="room-image room-image-placeholder">'+esc(i.glyph||'∞')+'</div>',facts=(p.categories||[]).slice(0,5).map(x=>x.title.replace(/^Category:/,'')).filter(Boolean);content.innerHTML='<article class="room-part room-door"><div class="room-kicker">EXHIBIT ROOM · '+esc(i.wing)+'</div><div class="room-glyph">'+esc(i.glyph||'∞')+'</div><p class="room-year">'+esc(i.year||'LIVE ARCHIVE')+'</p><h1>'+esc(p.title)+'</h1><p class="room-lead">'+esc(i.description)+'</p><span class="scroll-cue">SCROLL TO WALK THROUGH ↘</span></article><article class="room-part room-origin"><div class="room-copy"><p class="room-label">01 / AT THE ENTRANCE</p><h2>Where it begins.</h2><p>'+esc(story[0])+'</p><div class="fact-tags">'+facts.map(x=>'<span>'+esc(x)+'</span>').join('')+'</div></div>'+image+'</article>'+story.slice(1,8).map((part,index)=>'<article class="room-part room-story"><div class="wall-visual"'+(free[index]?.url?.startsWith('https')?' style="background-image:url(&quot;'+esc(free[index].url)+'&quot;)"':'')+'><span>'+esc(i.glyph||'∞')+'</span><small class="media-credit">'+(free[index]?'Openverse · '+esc(free[index].license):'Themed museum visual')+'</small></div><div class="wall-copy"><div class="room-number">0'+(index+2)+'</div><div><p class="room-label">'+(['THE STORY','WHY IT MATTERS','THE PEOPLE','THE TURNING POINT','DOWN THE RABBIT HOLE','STILL ECHOING','WHAT CAME NEXT'][index]||'IN THE ARCHIVE')+'</p><p class="story-text">'+esc(wallText(part))+'</p></div></div></article>').join('')+'<article class="room-part room-connections"><div><p class="room-label">OPEN ANOTHER DOOR</p><h2>Keep wandering.</h2><p>These nearby subjects became doors in this room.</p><div class="room-related"></div></div><div class="room-actions"><button id="keep">'+(state.saved.some(x=>x.id===i.id)?'♥ In your vault':'♡ Keep in vault')+'</button><a href="'+esc(wiki(p.title))+'" target="_blank" rel="noopener">Read the full archive ↗</a><a href="'+esc(openverse(p.title))+'" target="_blank" rel="noopener">Openverse images ↗</a></div><p class="room-source">Live Wikipedia material, CC BY-SA 4.0. Images retain their original licences.</p></article>';$('#keep').onclick=()=>{toggleSave(i);$('#keep').textContent=state.saved.some(x=>x.id===i.id)?'♥ In your vault':'♡ Keep in vault'};$('.room-related').replaceChildren(...related.map(x=>{const b=document.createElement('button');b.textContent=x.title+' ↗';b.onclick=()=>openExhibit(all().find(y=>y.title===x.title)||{id:x.title,title:x.title,glyph:'wiki',description:'A connected live discovery from '+p.title+'.',wing:'Discoveries',live:true,tone:i.tone});return b}))}catch{const research=await webResearch(i.title);if(n!==articleRequest)return;content.innerHTML=await researchRoom(i,research)}}
-$('#roomContent').addEventListener('wheel',e=>{if(Math.abs(e.deltaY)>Math.abs(e.deltaX)){e.preventDefault();e.currentTarget.scrollLeft+=e.deltaY}},{passive:false});$('#searchForm').onsubmit=search;$('#searchOpen').onclick=()=>{$('#explore').scrollIntoView();$('#search').focus()};$('#begin').onclick=()=>$('#explore').scrollIntoView();$('.quick').addEventListener('click',e=>{if(e.target.tagName!=='BUTTON')return;$('#search').value=e.target.id==='random'?CATALOG[Math.floor(Math.random()*CATALOG.length)].title:e.target.textContent;search()});$('#loadMore').onclick=()=>{limit+=16;render()};$('#pause').onclick=()=>{state.paused=!state.paused;persist();recommendations();$('#pause').textContent=state.paused?'Resume learning':'Pause learning'};$('#reset').onclick=()=>{state={...state,scores:{},seen:[],queries:[],discoveries:[],threads:[]};persist();results=null;$('#searchPulse').hidden=true;render();renderMap();recommendations()};$('#closeRoom').onclick=()=>{const r=$('#exhibitRoom');r.className='exhibit-room';r.setAttribute('aria-hidden','true');document.body.classList.remove('room-open');articleRequest++};$('#privacy').onclick=()=>openExhibit({title:'How the museum learns',glyph:'im',wing:'Museum note',description:'Every search creates a local thread: the search phrase, matching museum exhibits and Wikipedia discoveries are stored in this browser. The museum uses words in those threads to gently rank what you see next. Nothing is sent to an Internet Museum server. Pause stops new learning and Reset clears the trail while keeping your vault.'});render();renderSaved();renderMap();recommendations();
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+"use strict";
+const $ = (s) => document.querySelector(s),
+  esc = (s) =>
+    String(s ?? "").replace(
+      /[&<>"']/g,
+      (c) =>
+        ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[c],
+    );
+const wiki = (t) =>
+  "https://en.wikipedia.org/wiki/" + encodeURIComponent(t.replaceAll(" ", "_"));
+const openverse = (t) =>
+  "https://openverse.org/search/image?q=" + encodeURIComponent(t);
+const googleSearch = (t) =>
+  "https://www.google.com/search?q=" + encodeURIComponent(t);
+const RESEARCH_URL = "https://internet-museum-research.onrender.com/search";
+let state;
+try {
+  state = JSON.parse(localStorage.getItem("internet-museum-v2"));
+} catch {}
+state = {
+  saved: [],
+  seen: [],
+  queries: [],
+  discoveries: [],
+  threads: [],
+  scores: {},
+  paused: false,
+  ...(state || {}),
+};
+let wing = "All exhibits",
+  results = null,
+  limit = 16,
+  request = 0,
+  articleRequest = 0;
+const cache = new Map(),
+  tones = ["#e4d6ff", "#c7ebc3", "#f7c9d7", "#b7dcff", "#fae5a7", "#d5e8c9"];
+const persist = () =>
+  localStorage.setItem("internet-museum-v2", JSON.stringify(state));
+const all = () => [
+  ...CATALOG,
+  ...state.discoveries.filter((x) => !CATALOG.some((y) => y.id === x.id)),
+];
+async function api(params) {
+  const u = new URL("https://en.wikipedia.org/w/api.php");
+  u.search = new URLSearchParams({
+    action: "query",
+    format: "json",
+    formatversion: "2",
+    origin: "*",
+    ...params,
+  });
+  const r = await fetch(u, { signal: AbortSignal.timeout(15000) });
+  if (!r.ok) throw Error("Wikipedia unavailable");
+  return r.json();
+}
+function addScore(topic, n = 1) {
+  if (state.paused) return;
+  state.scores[topic] = (state.scores[topic] || 0) + n;
+}
+function activeItems() {
+  let x = results || all();
+  return x.filter((i) =>
+    wing === "All exhibits" || wing === "Discoveries"
+      ? wing === "All exhibits" || i.live
+      : i.wing === wing,
+  );
+}
+function toggleSave(i) {
+  state.saved = state.saved.some((x) => x.id === i.id)
+    ? state.saved.filter((x) => x.id !== i.id)
+    : [i, ...state.saved];
+  persist();
+  render();
+  renderSaved();
+}
+function exhibit(i) {
+  const saved = state.saved.some((x) => x.id === i.id),
+    el = document.createElement("article");
+  el.className = "exhibit";
+  el.innerHTML =
+    '<div class="exhibit-art" style="--tone:' +
+    esc(i.tone || tones[i.title.length % tones.length]) +
+    '"><span class="glyph">' +
+    esc(i.glyph || "∞") +
+    '</span><span class="year">' +
+    esc(i.year || "LIVE") +
+    '</span><span class="ticket">' +
+    (i.live ? "NEW THREAD" : "EXHIBIT") +
+    '</span></div><button class="open-exhibit"><span class="tag">' +
+    esc(i.wing) +
+    "</span><h3>" +
+    esc(i.title) +
+    "</h3><p>" +
+    esc(i.description) +
+    '</p></button><button class="save ' +
+    (saved ? "saved" : "") +
+    '" aria-label="Save ' +
+    esc(i.title) +
+    '">' +
+    (saved ? "♥" : "♡") +
+    "</button>";
+  el.querySelector(".open-exhibit").onclick = () => openExhibit(i);
+  el.querySelector(".save").onclick = () => toggleSave(i);
+  return el;
+}
+function render() {
+  const items = activeItems();
+  $("#grid").replaceChildren(...items.slice(0, limit).map(exhibit));
+  if (!items.length)
+    $("#grid").innerHTML =
+      '<div class="empty">This room is still empty. Search for something unexpected.</div>';
+  $("#loadMore").hidden = items.length <= limit;
+  $("#filters").replaceChildren(
+    ...[...WINGS, "Discoveries"].map((w) => {
+      const b = document.createElement("button");
+      b.className = "filter " + (wing === w ? "active" : "");
+      b.textContent = w;
+      b.onclick = () => {
+        wing = w;
+        results = null;
+        limit = 16;
+        render();
+      };
+      return b;
+    }),
+  );
+  $("#savedCount").textContent = state.saved.length;
+  $("#trailCount").textContent = state.threads.length;
+}
+function renderSaved() {
+  $("#savedGrid").replaceChildren(...state.saved.map(exhibit));
+  if (!state.saved.length)
+    $("#savedGrid").innerHTML =
+      '<div class="empty">The vault is empty. Keep a few strange things safe.</div>';
+}
+function recommendations() {
+  const thread = state.threads[0],
+    names = new Set(state.seen);
+  const top = all()
+    .filter((i) => !names.has(i.id))
+    .sort((a, b) => (state.scores[b.wing] || 0) - (state.scores[a.wing] || 0))
+    .slice(0, 5);
+  $("#recommendations").replaceChildren(
+    ...top.map((i) => {
+      const b = document.createElement("button");
+      b.className = "rec";
+      b.innerHTML =
+        '<span class="rec-glyph">' +
+        esc((i.glyph || "∞").slice(0, 4)) +
+        "</span><span><b>" +
+        esc(i.title) +
+        "</b><small>" +
+        (thread ? "Connected to “" + esc(thread.query) + "”" : i.wing) +
+        " · " +
+        esc(i.year) +
+        "</small></span><span>↗</span>";
+      b.onclick = () => openExhibit(i);
+      return b;
+    }),
+  );
+  const n = state.threads.length;
+  $("#learningText").textContent = state.paused
+    ? "Learning is paused. Your existing map is still here."
+    : n
+      ? "You have opened " +
+        n +
+        " search thread" +
+        (n === 1 ? "" : "s") +
+        ". The next gallery is being chosen from the ideas you keep returning to."
+      : "Your first search will light up a path through the museum.";
+}
+function renderMap() {
+  const m = $("#map"),
+    ts = state.threads.slice(0, 7);
+  m.replaceChildren();
+  if (!ts.length) {
+    m.innerHTML =
+      '<div class="empty" style="margin:55px 18px;color:#bfc7b5;border-color:#5a6254">Search something. The map will start to glow.</div>';
+    return;
+  }
+  const pts = ts.map((t, i) => ({
+    x: [45, 17, 77, 27, 67, 13, 87][i],
+    y: [48, 18, 22, 76, 73, 61, 47][i],
+  }));
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[0],
+      b = pts[i],
+      dx = b.x - a.x,
+      dy = b.y - a.y,
+      line = document.createElement("i");
+    line.className = "map-line";
+    line.style.cssText =
+      "left:" +
+      a.x +
+      "%;top:" +
+      a.y +
+      "%;width:" +
+      Math.hypot(dx, dy) +
+      "%;transform:rotate(" +
+      (Math.atan2(dy, dx) * 180) / Math.PI +
+      "deg)";
+    m.append(line);
+  }
+  ts.forEach((t, i) => {
+    const n = document.createElement("button");
+    n.className = "map-node " + (i === 0 ? "search" : i % 2 ? "discovery" : "");
+    n.style.left = "calc(" + pts[i].x + "% - 39px)";
+    n.style.top = "calc(" + pts[i].y + "% - 39px)";
+    n.textContent = t.query;
+    n.onclick = () => {
+      results = t.items;
+      wing = "All exhibits";
+      limit = 16;
+      render();
+      $("#rooms").scrollIntoView();
+    };
+    m.append(n);
+  });
+}
+function threadPulse(t) {
+  const p = $("#searchPulse");
+  p.hidden = false;
+  p.innerHTML =
+    '<div class="pulse-title">✦ SEARCH THREAD CREATED · ' +
+    esc(t.items.length) +
+    ' ROOMS FOUND</div><div class="pulse-tags">' +
+    t.keywords
+      .slice(0, 8)
+      .map((x) => "<span>" + esc(x) + "</span>")
+      .join("") +
+    "</div>";
+}
+function learnFromSearch(q, pages) {
+  const words = [
+      q,
+      ...pages
+        .slice(0, 7)
+        .flatMap((p) =>
+          (p.title + " " + (p.description || "")).split(/[^\p{L}\p{N}]+/u),
+        )
+        .filter((x) => x.length > 3),
+    ].map((x) => x.toLowerCase()),
+    thread = {
+      query: q,
+      keywords: [...new Set(words)].slice(0, 20),
+      items: pages,
+      at: Date.now(),
+    };
+  if (!state.paused) {
+    state.threads = [
+      thread,
+      ...state.threads.filter((x) => x.query.toLowerCase() !== q.toLowerCase()),
+    ].slice(0, 20);
+    state.queries = [q, ...state.queries.filter((x) => x !== q)].slice(0, 50);
+    for (const i of CATALOG) {
+      const hay = (i.title + " " + i.description + " " + i.wing).toLowerCase(),
+        hits = thread.keywords.filter(
+          (k) => k.length > 3 && hay.includes(k),
+        ).length;
+      if (hits) addScore(i.wing, Math.min(2, hits * 0.35));
+    }
+    const known = new Map(state.discoveries.map((x) => [x.id, x]));
+    pages.forEach((x) => {
+      if (!CATALOG.some((y) => y.id === x.id)) known.set(x.id, x);
+    });
+    state.discoveries = [...known.values()].slice(-400);
+    persist();
+  }
+  return thread;
+}
+async function search(e) {
+  e?.preventDefault();
+  const q = $("#search").value.trim();
+  if (!q) return;
+  const n = ++request;
+  wing = "All exhibits";
+  results = null;
+  $("#searchPulse").hidden = false;
+  $("#searchPulse").innerHTML =
+    '<div class="pulse-title">SEARCHING THE LIVING ARCHIVE…</div>';
+  try {
+    const data = await api({
+      generator: "search",
+      gsrsearch: q,
+      gsrnamespace: 0,
+      gsrlimit: 24,
+      prop: "description|pageimages",
+      piprop: "thumbnail",
+      pithumbsize: 400,
+    });
+    if (n !== request) return;
+    const local = CATALOG.filter((x) =>
+        (x.title + " " + x.description + " " + x.wing)
+          .toLowerCase()
+          .includes(q.toLowerCase()),
+      ),
+      used = new Set(local.map((x) => x.title.toLowerCase())),
+      live = (data.query?.pages || [])
+        .sort((a, b) => a.index - b.index)
+        .filter((x) => !used.has(x.title.toLowerCase()))
+        .map((p) => ({
+          id: p.title,
+          title: p.title,
+          glyph: "wiki",
+          description: p.description || "A live discovery from Wikipedia.",
+          wing: "Discoveries",
+          live: true,
+          tone: tones[p.title.length % tones.length],
+        }));
+    const inquiry = {
+      id: "inquiry:" + q.toLowerCase(),
+      title: q,
+      glyph: "? ",
+      description:
+        "Your inquiry. Enter this room to research the exact phrase you searched.",
+      wing: "Discoveries",
+      live: true,
+      tone: "#d9d5ff",
+    };
+    results = [
+      inquiry,
+      ...local,
+      ...live.filter((x) => x.title.toLowerCase() !== q.toLowerCase()),
+    ];
+    const t = learnFromSearch(q, results);
+    threadPulse(t);
+    render();
+    renderMap();
+    recommendations();
+  } catch {
+    const inquiry = {
+      id: "inquiry:" + q.toLowerCase(),
+      title: q,
+      glyph: "? ",
+      description:
+        "Your inquiry. Enter this room to research the exact phrase you searched.",
+      wing: "Discoveries",
+      live: true,
+      tone: "#d9d5ff",
+    };
+    results = [
+      inquiry,
+      ...CATALOG.filter((x) =>
+        (x.title + " " + x.description).toLowerCase().includes(q.toLowerCase()),
+      ),
+    ];
+    $("#searchPulse").innerHTML =
+      '<div class="pulse-title">OPENING AN ALTERNATIVE RESEARCH TRAIL…</div>';
+    render();
+  }
+}
+const mediaCache = new Map();
+async function duckInfo(query) {
+  try {
+    const r = await fetch(
+      "https://api.duckduckgo.com/?q=" +
+        encodeURIComponent(query) +
+        "&format=json&no_html=1&skip_disambig=1",
+      { signal: AbortSignal.timeout(7000) },
+    );
+    if (!r.ok) throw Error();
+    const d = await r.json();
+    const text = d.AbstractText || d.Answer || d.Definition || "";
+    return text
+      ? {
+          text,
+          url:
+            d.AbstractURL ||
+            "https://duckduckgo.com/?q=" + encodeURIComponent(query),
+        }
+      : null;
+  } catch {
+    return null;
+  }
+}
+async function webResearch(query) {
+  try {
+    const r = await fetch(
+      RESEARCH_URL + "?q=" + encodeURIComponent(query) + "&format=json",
+      { signal: AbortSignal.timeout(15000) },
+    );
+    if (!r.ok) throw Error();
+    const d = await r.json(),
+      results = (d.results || [])
+        .filter((x) => x.title && x.url && x.content)
+        .slice(0, 10)
+        .map((x) => ({
+          title: x.title.replace(/<[^>]*>/g, ""),
+          text: x.content.replace(/<[^>]*>/g, ""),
+          url: x.url,
+        }));
+    return { results, text: results.map((x) => x.text).join(" ") };
+  } catch {
+    return { results: [], text: "" };
+  }
+}
+async function wikipediaLead(query) {
+  try {
+    const d = await api({
+        generator: "search",
+        gsrsearch: query,
+        gsrnamespace: 0,
+        gsrlimit: 1,
+        prop: "description",
+      }),
+      p = (d.query?.pages || []).sort((a, b) => a.index - b.index)[0];
+    return p
+      ? {
+          id: p.title,
+          title: p.title,
+          glyph: "wiki",
+          description:
+            p.description || "A connected live discovery from your search.",
+          wing: "Discoveries",
+          live: true,
+          tone: "#d9d5ff",
+        }
+      : null;
+  } catch {
+    return null;
+  }
+}
+async function researchRoom(i, research) {
+  const media = await freeMedia(i.title),
+    sources = research.results.slice(0, 8),
+    story = sources.map((x) => wallText(x.text)).filter(Boolean);
+  const visual = (index) =>
+    media[index]?.url?.startsWith("https")
+      ? ' style="background-image:url(&quot;' +
+        esc(media[index].url) +
+        '&quot;)"'
+      : "";
+  if (!sources.length)
+    return (
+      '<article class="room-part room-door"><div class="room-kicker">LIVE RESEARCH DESK</div><div class="room-glyph">?</div><h1>' +
+      esc(i.title) +
+      '</h1><p class="room-lead">The open web did not return usable sources for this exact phrase yet.</p><span class="scroll-cue">TRY A MORE SPECIFIC TRAIL ↘</span></article><article class="room-part room-connections"><div><p class="room-label">NO INVENTED EXHIBIT</p><h2>Nothing is being made up here.</h2><p>Try adding a name, place, year, platform, or other detail. The museum will only build walls from sources it can actually find.</p></div><div class="room-actions"><a href="' +
+      esc(googleSearch(i.title)) +
+      '" target="_blank" rel="noopener">Search Google ↗</a><a href="' +
+      esc(wiki(i.title)) +
+      '" target="_blank" rel="noopener">Check Wikipedia ↗</a></div></article>'
+    );
+  const parts = story.slice(0, 7);
+  while (parts.length < 7)
+    parts.push(
+      "This source trail is shorter than a full gallery. Open the original source to continue the research.",
+    );
+  return (
+    '<article class="room-part room-door"><div class="room-kicker">LIVE RESEARCH DESK</div><div class="room-glyph">' +
+    esc(i.glyph || "⌕") +
+    "</div><h1>" +
+    esc(i.title) +
+    '</h1><p class="room-lead">A source-built exhibit: each wall comes from a different result.</p><span class="scroll-cue">SCROLL TO WALK THROUGH ↘</span></article><article class="room-part room-origin"><div class="room-copy"><p class="room-label">01 / FIRST LEAD</p><h2>' +
+    esc(sources[0].title) +
+    "</h2><p>" +
+    esc(story[0]) +
+    '</p></div><div class="room-image room-image-placeholder">⌕</div></article>' +
+    parts
+      .slice(1)
+      .map(
+        (part, index) =>
+          '<article class="room-part room-story"><div class="wall-visual"' +
+          visual(index) +
+          "><span>" +
+          esc(i.glyph || "⌕") +
+          '</span><small class="media-credit">' +
+          (media[index]
+            ? "Openverse · " + esc(media[index].license)
+            : "Source trail " + (index + 2)) +
+          '</small></div><div class="wall-copy"><div class="room-number">0' +
+          (index + 2) +
+          '</div><div><p class="room-label">' +
+          esc(sources[index + 1]?.title || "MORE TO EXPLORE") +
+          '</p><p class="story-text">' +
+          esc(part) +
+          "</p></div></div></article>",
+      )
+      .join("") +
+    '<article class="room-part room-connections"><div><p class="room-label">THE SOURCE SHELF</p><h2>Keep researching.</h2><p>These are the pages the room was built from.</p></div><div class="room-actions">' +
+    sources
+      .slice(0, 4)
+      .map(
+        (x) =>
+          '<a href="' +
+          esc(x.url) +
+          '" target="_blank" rel="noopener">' +
+          esc(x.title.slice(0, 44)) +
+          " ↗</a>",
+      )
+      .join("") +
+    "</div></article>"
+  );
+}
+function fallbackRoom(i, text, url) {
+  const story = splitStory(text, i.description);
+  return (
+    '<article class="room-part room-door"><div class="room-kicker">OUTSIDE THE WIKIPEDIA ARCHIVE</div><div class="room-glyph">' +
+    esc(i.glyph || "∞") +
+    "</div><h1>" +
+    esc(i.title) +
+    '</h1><p class="room-lead">' +
+    esc(i.description) +
+    '</p><span class="scroll-cue">SCROLL TO WALK THROUGH ↘</span></article><article class="room-part room-origin"><div class="room-copy"><p class="room-label">01 / DISCOVERED ON THE OPEN WEB</p><h2>A different trail.</h2><p>' +
+    esc(story[0]) +
+    '</p></div><div class="room-image room-image-placeholder">' +
+    esc(i.glyph || "∞") +
+    "</div></article>" +
+    story
+      .slice(1, 8)
+      .map(
+        (part, index) =>
+          '<article class="room-part room-story"><div class="wall-visual"><span>' +
+          esc(i.glyph || "∞") +
+          '</span><small class="media-credit">Themed museum visual</small></div><div class="wall-copy"><div class="room-number">0' +
+          (index + 2) +
+          '</div><div><p class="room-label">' +
+          [
+            "THE CLUE",
+            "WHY IT MATTERS",
+            "THE PEOPLE",
+            "THE TURNING POINT",
+            "THE RABBIT HOLE",
+            "STILL ECHOING",
+            "WHAT CAME NEXT",
+          ][index] +
+          '</p><p class="story-text">' +
+          esc(part) +
+          "</p></div></div></article>",
+      )
+      .join("") +
+    '<article class="room-part room-connections"><div><p class="room-label">KEEP INVESTIGATING</p><h2>The trail continues.</h2><p>This topic has no Wikipedia article, so this room was made from an open-web instant answer.</p></div><div class="room-actions"><a href="' +
+    esc(url) +
+    '" target="_blank" rel="noopener">Open the source ↗</a><a href="' +
+    esc(googleSearch(i.title)) +
+    '" target="_blank" rel="noopener">Search Google ↗</a></div></article>'
+  );
+}
+async function freeMedia(query) {
+  if (mediaCache.has(query)) return mediaCache.get(query);
+  try {
+    const r = await fetch(
+      "https://api.openverse.org/v1/images/?q=" +
+        encodeURIComponent(query) +
+        "&page_size=8",
+      {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(7000),
+      },
+    );
+    if (!r.ok) throw Error();
+    const data = await r.json();
+    const result = (data.results || [])
+      .filter((x) => x.thumbnail || x.url)
+      .map((x) => ({
+        url: x.thumbnail || x.url,
+        creator: x.creator || "Openverse contributor",
+        license: (x.license || "open licence").toUpperCase(),
+        source: x.foreign_landing_url || x.url,
+      }));
+    mediaCache.set(query, result);
+    return result;
+  } catch {
+    mediaCache.set(query, []);
+    return [];
+  }
+}
+function learnItem(i) {
+  if (state.paused) return;
+  state.seen = [i.id, ...state.seen.filter((x) => x !== i.id)].slice(0, 150);
+  addScore(i.wing, 2);
+  persist();
+  recommendations();
+}
+function themeFor(i) {
+  const s = (i.title + " " + i.wing).toLowerCase();
+  if (/game|minecraft|twitch|roblox/.test(s)) return "arcade";
+  if (/social|meme|youtube|emoji|myspace/.test(s)) return "social";
+  if (/security|hack|crypto|privacy/.test(s)) return "terminal";
+  if (/web|browser|search|wiki/.test(s)) return "web";
+  return "archive";
+}
+function splitStory(text, fallback) {
+  const clean = String(text || fallback || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const bits = (clean.match(/[^.!?]{35,280}[.!?]+/g) || [])
+    .map((x) => x.trim())
+    .filter((x) => x.length > 35);
+  const walls = [];
+  for (const bit of [fallback, ...bits]) {
+    const line = wallText(bit);
+    if (line && !walls.includes(line)) walls.push(line);
+  }
+  while (walls.length < 8)
+    walls.push(
+      walls.length === 1
+        ? "This is one of the ideas that shaped how people use the internet."
+        : "Its story keeps unfolding through the people and tools connected to it.",
+    );
+  return walls.slice(0, 8);
+}
+function wallText(text) {
+  const first =
+    String(text || "").match(/^.*?[.!?](?:\\s|$)/)?.[0] || String(text || "");
+  return first.length > 230 ? first.slice(0, 227) + "…" : first;
+}
+async function openExhibit(i) {
+  learnItem(i);
+  const room = $("#exhibitRoom"),
+    content = $("#roomContent"),
+    n = ++articleRequest,
+    theme = themeFor(i);
+  room.className = "exhibit-room open theme-" + theme;
+  room.setAttribute("aria-hidden", "false");
+  document.body.classList.add("room-open");
+  content.innerHTML =
+    '<article class="room-part room-door"><div class="room-kicker">EXHIBIT ROOM · ' +
+    esc(i.wing) +
+    '</div><div class="room-glyph">' +
+    esc(i.glyph || "∞") +
+    '</div><p class="room-year">' +
+    esc(i.year || "LIVE ARCHIVE") +
+    "</p><h1>" +
+    esc(i.title) +
+    '</h1><p class="room-lead">' +
+    esc(i.description) +
+    '</p><span class="scroll-cue">SCROLL TO WALK THROUGH ↘</span></article><article class="room-part room-loading"><p>Unpacking the archive…</p></article>';
+  try {
+    if (String(i.id).startsWith("inquiry:")) {
+      const research = await webResearch(i.title);
+      if (n !== articleRequest) return;
+      if (research.results.length) {
+        content.innerHTML = await researchRoom(i, research);
+        return;
+      }
+      const lead = await wikipediaLead(i.title);
+      if (n !== articleRequest) return;
+      if (lead) {
+        openExhibit({
+          ...lead,
+          id: "research:" + i.id,
+          queryTitle: i.title,
+          description:
+            'A source-built exhibit for your exact search, researched through “' +
+            lead.title +
+            '”.',
+        });
+        return;
+      }
+      content.innerHTML = await researchRoom(i, research);
+      return;
+    }
+    let data = cache.get(i.title);
+    if (!data) {
+      data = await api({
+        titles: i.title,
+        redirects: 1,
+        prop: "extracts|pageimages|links|categories",
+        explaintext: 1,
+        piprop: "thumbnail",
+        pithumbsize: 1200,
+        plnamespace: 0,
+        pllimit: 16,
+        cllimit: 8,
+      });
+      cache.set(i.title, data);
+    }
+    if (n !== articleRequest) return;
+    const p = data.query?.pages?.[0];
+    if (!p || p.missing) throw Error();
+    const free = await freeMedia(p.title);
+    if (n !== articleRequest) return;
+    const story = splitStory(p.extract, i.description),
+      related = (p.links || [])
+        .filter((x) => !x.title.includes(":"))
+        .slice(0, 12),
+      image = p.thumbnail?.source?.startsWith("https://upload.wikimedia.org/")
+        ? '<img class="room-image" src="' +
+          esc(p.thumbnail.source) +
+          '" alt="">'
+        : '<div class="room-image room-image-placeholder">' +
+          esc(i.glyph || "∞") +
+          "</div>",
+      facts = (p.categories || [])
+        .slice(0, 5)
+        .map((x) => x.title.replace(/^Category:/, ""))
+        .filter(Boolean);
+    content.innerHTML =
+      '<article class="room-part room-door"><div class="room-kicker">EXHIBIT ROOM · ' +
+      esc(i.wing) +
+      '</div><div class="room-glyph">' +
+      esc(i.glyph || "∞") +
+      '</div><p class="room-year">' +
+      esc(i.year || "LIVE ARCHIVE") +
+      "</p><h1>" +
+      esc(i.queryTitle || p.title) +
+      '</h1><p class="room-lead">' +
+      esc(i.description) +
+      '</p><span class="scroll-cue">SCROLL TO WALK THROUGH ↘</span></article><article class="room-part room-origin"><div class="room-copy"><p class="room-label">01 / AT THE ENTRANCE</p><h2>Where it begins.</h2><p>' +
+      esc(story[0]) +
+      '</p><div class="fact-tags">' +
+      facts.map((x) => "<span>" + esc(x) + "</span>").join("") +
+      "</div></div>" +
+      image +
+      "</article>" +
+      story
+        .slice(1, 8)
+        .map(
+          (part, index) =>
+            '<article class="room-part room-story"><div class="wall-visual"' +
+            (free[index]?.url?.startsWith("https")
+              ? ' style="background-image:url(&quot;' +
+                esc(free[index].url) +
+                '&quot;)"'
+              : "") +
+            "><span>" +
+            esc(i.glyph || "∞") +
+            '</span><small class="media-credit">' +
+            (free[index]
+              ? "Openverse · " + esc(free[index].license)
+              : "Themed museum visual") +
+            '</small></div><div class="wall-copy"><div class="room-number">0' +
+            (index + 2) +
+            '</div><div><p class="room-label">' +
+            ([
+              "THE STORY",
+              "WHY IT MATTERS",
+              "THE PEOPLE",
+              "THE TURNING POINT",
+              "DOWN THE RABBIT HOLE",
+              "STILL ECHOING",
+              "WHAT CAME NEXT",
+            ][index] || "IN THE ARCHIVE") +
+            '</p><p class="story-text">' +
+            esc(wallText(part)) +
+            "</p></div></div></article>",
+        )
+        .join("") +
+      '<article class="room-part room-connections"><div><p class="room-label">OPEN ANOTHER DOOR</p><h2>Keep wandering.</h2><p>These nearby subjects became doors in this room.</p><div class="room-related"></div></div><div class="room-actions"><button id="keep">' +
+      (state.saved.some((x) => x.id === i.id)
+        ? "♥ In your vault"
+        : "♡ Keep in vault") +
+      '</button><a href="' +
+      esc(wiki(p.title)) +
+      '" target="_blank" rel="noopener">Read the full archive ↗</a><a href="' +
+      esc(openverse(p.title)) +
+      '" target="_blank" rel="noopener">Openverse images ↗</a></div><p class="room-source">Live Wikipedia material, CC BY-SA 4.0. Images retain their original licences.</p></article>';
+    $("#keep").onclick = () => {
+      toggleSave(i);
+      $("#keep").textContent = state.saved.some((x) => x.id === i.id)
+        ? "♥ In your vault"
+        : "♡ Keep in vault";
+    };
+    $(".room-related").replaceChildren(
+      ...related.map((x) => {
+        const b = document.createElement("button");
+        b.textContent = x.title + " ↗";
+        b.onclick = () =>
+          openExhibit(
+            all().find((y) => y.title === x.title) || {
+              id: x.title,
+              title: x.title,
+              glyph: "wiki",
+              description: "A connected live discovery from " + p.title + ".",
+              wing: "Discoveries",
+              live: true,
+              tone: i.tone,
+            },
+          );
+        return b;
+      }),
+    );
+  } catch {
+    const research = await webResearch(i.title);
+    if (n !== articleRequest) return;
+    content.innerHTML = await researchRoom(i, research);
+  }
+}
+$("#roomContent").addEventListener(
+  "wheel",
+  (e) => {
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      e.preventDefault();
+      e.currentTarget.scrollLeft += e.deltaY;
+    }
+  },
+  { passive: false },
+);
+$("#searchForm").onsubmit = search;
+$("#searchOpen").onclick = () => {
+  $("#explore").scrollIntoView();
+  $("#search").focus();
+};
+$("#begin").onclick = () => $("#explore").scrollIntoView();
+$(".quick").addEventListener("click", (e) => {
+  if (e.target.tagName !== "BUTTON") return;
+  $("#search").value =
+    e.target.id === "random"
+      ? CATALOG[Math.floor(Math.random() * CATALOG.length)].title
+      : e.target.textContent;
+  search();
+});
+$("#loadMore").onclick = () => {
+  limit += 16;
+  render();
+};
+$("#pause").onclick = () => {
+  state.paused = !state.paused;
+  persist();
+  recommendations();
+  $("#pause").textContent = state.paused ? "Resume learning" : "Pause learning";
+};
+$("#reset").onclick = () => {
+  state = {
+    ...state,
+    scores: {},
+    seen: [],
+    queries: [],
+    discoveries: [],
+    threads: [],
+  };
+  persist();
+  results = null;
+  $("#searchPulse").hidden = true;
+  render();
+  renderMap();
+  recommendations();
+};
+$("#closeRoom").onclick = () => {
+  const r = $("#exhibitRoom");
+  r.className = "exhibit-room";
+  r.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("room-open");
+  articleRequest++;
+};
+$("#privacy").onclick = () =>
+  openExhibit({
+    title: "How the museum learns",
+    glyph: "im",
+    wing: "Museum note",
+    description:
+      "Every search creates a local thread: the search phrase, matching museum exhibits and Wikipedia discoveries are stored in this browser. The museum uses words in those threads to gently rank what you see next. Nothing is sent to an Internet Museum server. Pause stops new learning and Reset clears the trail while keeping your vault.",
+  });
+render();
+renderSaved();
+renderMap();
+recommendations();
