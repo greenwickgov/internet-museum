@@ -688,8 +688,10 @@ async function openExhibit(i) {
         .map((x) => x.title.replace(/^Category:/, ""))
         .filter(Boolean);
     content.innerHTML =
-      '<article class="room-part room-door"><div class="room-kicker">EXHIBIT ROOM · ' +
-      esc(i.wing) +
+      '<article class="room-part room-door"><div class="room-kicker">' +
+      (i.queryTitle
+        ? "SEARCH-BUILT EXHIBIT · VERIFIED SOURCES"
+        : "EXHIBIT ROOM · " + esc(i.wing)) +
       '</div><div class="room-glyph">' +
       esc(i.glyph || "∞") +
       '</div><p class="room-year">' +
@@ -698,8 +700,14 @@ async function openExhibit(i) {
       esc(i.queryTitle || p.title) +
       '</h1><p class="room-lead">' +
       esc(i.description) +
-      '</p><span class="scroll-cue">SCROLL TO WALK THROUGH ↘</span></article><article class="room-part room-origin"><div class="room-copy"><p class="room-label">01 / AT THE ENTRANCE</p><h2>Where it begins.</h2><p>' +
+      '</p><span class="scroll-cue">SCROLL TO WALK THROUGH ↘</span></article><article class="room-part room-origin"><div class="room-copy"><p class="room-label">01 / AT THE ENTRANCE</p><h2>' +
+      esc(i.queryTitle ? "Your search, unpacked." : "Where it begins.") +
+      '</h2><p>' +
       esc(story[0]) +
+      '</p><p class="room-source">' +
+      (i.queryTitle
+        ? "Research source: " + esc(p.title) + "."
+        : "") +
       '</p><div class="fact-tags">' +
       facts.map((x) => "<span>" + esc(x) + "</span>").join("") +
       "</div></div>" +
