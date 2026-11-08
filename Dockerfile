@@ -1,9 +1,9 @@
+FROM caddy:2-alpine AS cors_proxy
+
 FROM searxng/searxng:latest
 
 USER root
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends caddy \
-  && rm -rf /var/lib/apt/lists/*
+COPY --from=cors_proxy /usr/bin/caddy /usr/local/bin/caddy
 
 COPY searxng/settings.yml /etc/searxng/settings.yml
 COPY searxng/Caddyfile /etc/caddy/Caddyfile
