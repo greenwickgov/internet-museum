@@ -410,7 +410,16 @@ async function wikipediaLead(query) {
         prop: "description",
       }),
       p = (d.query?.pages || []).sort((a, b) => a.index - b.index)[0];
-    return p
+    const words = query
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((word) => word.length > 2);
+    const candidate = (p?.title + " " + (p?.description || "")).toLowerCase();
+    const matchingWords = words.filter((word) => candidate.includes(word)).length;
+    // Reject surname-only and other loose matches. A source must substantively
+    // match the request before it can become an exhibit's evidence.
+    const relevant = matchingWords >= Math.max(1, Math.ceil(words.length / 2));
+    return p && relevant
       ? {
           id: p.title,
           title: p.title,
