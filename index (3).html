@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Internet Museum</title>
+<meta name="description" content="A walk-through museum of internet history with live Wikipedia and Google search.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8F%9B%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Figtree:wght@400;600&display=swap">
+<link rel="stylesheet" href="style.css?v=3">
+</head>
+<body>
+<header>
+  <button class="brand" id="home">Internet Museum</button>
+  <div class="search">
+    <input id="q" type="search" placeholder="Search Wikipedia and Google (press /)" autocomplete="off" aria-label="Search">
+    <div class="panel" id="panel" role="region" aria-live="polite"></div>
+  </div>
+</header>
+
+<main>
+<section id="lobby">
+  <div class="lobby">
+    <div class="lights"></div>
+    <h1>Walk through the history of the internet</h1>
+    <p>Seven halls and <span id="total"></span> exhibits, from the first packets to the platforms we live in. Step inside, look closely, and follow any exhibit into the live archive.</p>
+    <button class="btn" id="enter">Enter the first hall</button>
+    <button class="btn ghost" id="rnd">Surprise me</button> <button class="btn ghost" id="mine">My collection (<span id="cnt">0</span>)</button>
+  </div>
+  <div class="halls" id="halls"></div>
+</section>
+<section class="hall" id="hall"></section>
+</main>
+
+<dialog id="dlg" aria-label="Exhibit details"></dialog>
+
+<footer class="ver">Internet Museum v3 · search builds exhibits · Wikipedia + Google</footer>
+<noscript><p style="padding:24px">The museum needs JavaScript to open its doors.</p></noscript>
+<script src="catalog.js?v=3"></script>
+<script src="app.js?v=3"></script>
+</body>
+</html>

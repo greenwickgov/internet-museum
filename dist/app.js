@@ -1,22 +1,158 @@
-'use strict';
-const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const wikiURL=t=>'https://en.wikipedia.org/wiki/'+encodeURIComponent(t.replaceAll(' ','_'));
-let state;try{state=JSON.parse(localStorage.getItem('internet-museum-v1'))}catch{}state={scores:{},seen:[],saved:[],queries:[],discoveries:[],paused:false,...(state&&typeof state==='object'?state:{})};
-let storageAvailable=true,wing='All exhibits',era=null,query='',limit=16,results=null,request=0,articleRequest=0;
-const cache=new Map();
-state.discoveries=Array.isArray(state.discoveries)?state.discoveries:[];
-function archiveItems(){const ids=new Set(CATALOG.map(x=>x.id));return [...CATALOG,...state.discoveries.filter(x=>!ids.has(x.id))]}
-function learnDiscoveries(items){if(state.paused)return;const map=new Map(state.discoveries.map(x=>[x.id,x]));for(const item of items)if(!CATALOG.some(x=>x.id===item.id))map.set(item.id,item);state.discoveries=[...map.values()].slice(-300);persist()}
-function persist(){try{localStorage.setItem('internet-museum-v1',JSON.stringify(state))}catch{storageAvailable=false;$('#learningText').textContent='Browser storage is unavailable. Personalisation works for this visit only.'}}
-function track(item,weight=2){if(state.paused)return;state.scores[item.wing]=(state.scores[item.wing]||0)+weight;state.seen=[item.id,...state.seen.filter(x=>x!==item.id)].slice(0,100);persist();recommend()}
-async function api(params){const u=new URL('https://en.wikipedia.org/w/api.php');u.search=new URLSearchParams({action:'query',format:'json',formatversion:'2',origin:'*',...params});const r=await fetch(u,{signal:AbortSignal.timeout(15000)});if(!r.ok)throw Error('Wikipedia returned '+r.status);const j=await r.json();if(j.error)throw Error(j.error.info||'Wikipedia request failed');return j}
-function toggleSave(item){const found=state.saved.some(x=>x.id===item.id);state.saved=found?state.saved.filter(x=>x.id!==item.id):[item,...state.saved];persist();render();renderSaved()}
-function card(item){const saved=state.saved.some(x=>x.id===item.id);const el=document.createElement('article');el.className='card';el.innerHTML=`<div class="card-visual" style="--tone:${TONES.includes(item.tone)?item.tone:TONES[0]}"><span class="glyph">${esc(item.glyph||'wiki.')}</span><span class="year">${esc(item.year||'LIVE ARCHIVE')}</span><button class="bookmark ${saved?'saved':''}" aria-label="${saved?'Remove':'Save'} ${esc(item.title)}" aria-pressed="${saved}">${saved?'▣':'▢'}</button></div><button class="open-card"><span class="tag">${esc(item.wing)}</span><h3>${esc(item.title)}</h3><p>${esc(item.description)}</p><span class="card-bottom"><span>${item.live?'WIKIPEDIA DISCOVERY':'EXPLORE EXHIBIT'}</span><span>↗</span></span></button>`;el.querySelector('.bookmark').onclick=()=>toggleSave(item);el.querySelector('.open-card').onclick=()=>openExhibit(item);return el}
-function getItems(){let items=results??archiveItems();items=items.filter(x=>(wing==='All exhibits'||(wing==='Discovered'?x.live:x.wing===wing))&&(!era||(x.year>=era&&x.year<era+10))&&(!query||results||[x.title,x.description,x.wing].join(' ').toLowerCase().includes(query.toLowerCase())));const sort=$('#sort').value;return [...items].sort(sort==='oldest'?(a,b)=>(a.year||9999)-(b.year||9999):sort==='newest'?(a,b)=>(b.year||0)-(a.year||0):sort==='az'?(a,b)=>a.title.localeCompare(b.title):()=>0)}
-function render(){const items=getItems();$('#grid').replaceChildren(...items.slice(0,limit).map(card));if(!items.length)$('#grid').innerHTML='<div class="empty">No exhibits match this view. Try another collection or search term.</div>';$('#resultCount').textContent=items.length+' exhibits';$('#viewTitle').textContent=query?'Discovering “'+query+'”':era?'The '+era+'s':wing==='All exhibits'?'Objects of internet history':wing;$('#loadMore').hidden=limit>=items.length;$('#filters').replaceChildren(...[...WINGS,'Discovered'].map(w=>{const b=document.createElement('button');b.className='filter'+(w===wing?' active':'');b.textContent=w;b.setAttribute('aria-pressed',w===wing);b.onclick=()=>{wing=w;era=null;limit=16;render()};return b}));$('#savedCount').textContent=state.saved.length}
-function renderSaved(){$('#savedGrid').replaceChildren(...state.saved.map(card));if(!state.saved.length)$('#savedGrid').innerHTML='<div class="empty">Your shelves are empty. Bookmark an exhibit to keep it here.</div>'}
-function recommend(){const best=Object.entries(state.scores).sort((a,b)=>b[1]-a[1])[0]?.[0];const items=archiveItems().filter(x=>!state.seen.includes(x.id)).sort((a,b)=>(state.scores[b.wing]||0)-(state.scores[a.wing]||0)).slice(0,4);$('#recommendations').replaceChildren(...items.map(x=>{const b=document.createElement('button');b.className='rec';b.innerHTML=`<span>${esc(x.glyph.slice(0,4))}</span><div><b>${esc(x.title)}</b><small>${esc(best&&x.wing===best?'Because you explored '+best:x.wing)} · ${x.year}</small></div><span>↗</span>`;b.onclick=()=>openExhibit(x);return b}));$('#pause').textContent=state.paused?'Resume learning':'Pause learning';if(storageAvailable)$('#learningText').textContent=state.paused?'Learning is paused. Your existing recommendations remain until you reset them.':best?'Your trail is leaning toward '+best+'. Keep exploring to discover more connections. Your interests stay in this browser.':'Explore an exhibit to start building your personal trail. Your interests stay in this browser.'}
-async function searchMuseum(event){event?.preventDefault();query=$('#search').value.trim();wing='All exhibits';era=null;limit=16;results=null;const n=++request;render();if(!query){$('#status').textContent='';return}if(!state.paused){state.queries=[query,...state.queries.filter(x=>x!==query)].slice(0,30);const words=query.toLowerCase().split(/\s+/).filter(x=>x.length>2);CATALOG.filter(x=>words.some(w=>(x.title+' '+x.description).toLowerCase().includes(w))).forEach(x=>{state.scores[x.wing]=(state.scores[x.wing]||0)+.25});persist();recommend()}$('#status').textContent='Searching Wikipedia’s live archive…';try{const data=await api({generator:'search',gsrsearch:query,gsrnamespace:'0',gsrlimit:'20',prop:'description|pageimages',piprop:'thumbnail',pithumbsize:'400'});if(n!==request)return;const local=CATALOG.filter(x=>(x.title+' '+x.description+' '+x.wing).toLowerCase().includes(query.toLowerCase()));const seen=new Set(local.map(x=>x.title.toLowerCase()));const pages=(data.query?.pages||[]).sort((a,b)=>a.index-b.index);results=[...local,...pages.filter(p=>!seen.has(p.title.toLowerCase())).map(p=>({id:p.title,title:p.title,glyph:'wiki.',description:p.description||'Explore this article from Wikipedia’s live archive.',wing:'The web',live:true}))];learnDiscoveries(results.filter(x=>x.live));render();$('#status').textContent=results.length?'Live Wikipedia results are ready. Searches can reach beyond internet history.':'No Wikipedia results. Try a broader term.'}catch(e){if(n!==request)return;$('#status').textContent='Wikipedia is unavailable right now. Showing matching museum exhibits; try again shortly.'}}
-async function openExhibit(item){track(item);const n=++articleRequest;const dialog=$('#exhibit');$('#exhibitContent').innerHTML=`<div class="eyebrow">${esc(item.wing)} · ${esc(item.year||'LIVE DISCOVERY')}</div><h2>${esc(item.title)}</h2><p>${esc(item.description)}</p><p role="status">Opening the Wikipedia archive…</p>`;if(!dialog.open)dialog.showModal();try{let data=cache.get(item.title);if(!data){data=await api({titles:item.title,redirects:'1',prop:'extracts|pageimages|info|links',explaintext:'1',exintro:'1',piprop:'thumbnail',pithumbsize:'500',inprop:'url',plnamespace:'0',pllimit:'30'});cache.set(item.title,data)}if(n!==articleRequest||!dialog.open)return;const p=data.query?.pages?.[0];if(!p||p.missing)throw Error('Article not found');learnDiscoveries([item]);const links=(p.links||[]).filter(l=>!l.title.includes(':')).slice(0,10);$('#exhibitContent').innerHTML=`<div class="eyebrow">${esc(item.wing)} · ${esc(item.year||'LIVE DISCOVERY')}</div><h2>${esc(p.title)}</h2>${p.thumbnail?.source?.startsWith('https://upload.wikimedia.org/')?`<img class="article-image" src="${esc(p.thumbnail.source)}" alt="${esc(p.title)}" referrerpolicy="no-referrer">`:''}<div class="article-text">${esc(p.extract||'An extract is not available for this entry. Open the source article to continue reading.')}</div><div class="article-actions"><a class="primary" href="${esc(wikiURL(p.title))}" target="_blank" rel="noopener">Read full Wikipedia article ↗</a><button class="outline" id="saveArticle">${state.saved.some(x=>x.id===item.id)?'Remove from collection':'Save to your collection'}</button></div><h3>Follow the connections</h3><div class="related"></div><p class="source-note">Live extract from Wikipedia, retrieved ${new Date().toLocaleDateString()}. Text is available under CC BY-SA 4.0; attribution and revision history are on the source article. Image credit and licence are available through the source article’s image page. Curatorial timeline placements are thematic and may differ from launch dates. Wikipedia may contain errors.</p>`;$('#saveArticle').onclick=()=>{toggleSave(item);$('#saveArticle').textContent=state.saved.some(x=>x.id===item.id)?'Remove from collection':'Save to your collection'};$('#exhibitContent .related').replaceChildren(...links.map(l=>{const b=document.createElement('button');b.className='filter';b.textContent=l.title+' ↗';b.onclick=()=>openExhibit(CATALOG.find(x=>x.title===l.title)||{id:l.title,title:l.title,wing:item.wing,glyph:'wiki.',description:'A connection from '+p.title,live:true});return b}))}catch(e){if(n!==articleRequest||!dialog.open)return;$('#exhibitContent').innerHTML=`<div class="eyebrow">${esc(item.wing)}</div><h2>${esc(item.title)}</h2><p>${esc(item.description)}</p><p>We couldn’t load this article. Wikipedia may be temporarily unavailable, or this entry may have moved.</p><div class="article-actions"><button id="retryArticle" class="outline">Try again</button><a class="primary" href="${esc(wikiURL(item.title))}" target="_blank" rel="noopener">Open Wikipedia ↗</a></div>`;$('#retryArticle').onclick=()=>openExhibit(item)}}
-$('#searchForm').onsubmit=searchMuseum;$('#searchOpen').onclick=()=>{$('#collection').scrollIntoView();$('#search').focus()};$('#sort').onchange=render;$('#loadMore').onclick=()=>{limit+=24;render()};$('#random').onclick=()=>openExhibit(CATALOG[Math.floor(Math.random()*CATALOG.length)]);$('#closeDialog').onclick=()=>{$('#exhibit').close();articleRequest++};$('#exhibit').addEventListener('click',e=>{if(e.target===$('#exhibit')){const r=e.target.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)e.target.close()}});$('#pause').onclick=()=>{state.paused=!state.paused;persist();recommend()};$('#reset').onclick=()=>{state.scores={};state.seen=[];state.queries=[];state.discoveries=[];persist();recommend();render()};$('#privacy').onclick=()=>{$('#exhibitContent').innerHTML='<div class="eyebrow">TRANSPARENT BY DESIGN</div><h2>Learning from curiosity.</h2><p>Exhibit visits add weight to their collection. Search terms add smaller weights to matching collections. Recommendations rank unseen exhibits using those interests. This is an adaptive recommendation system, not a trained AI model.</p><p>Newly discovered article titles and descriptions are added to your local Discovered gallery (up to 300 entries). Your profile, recent search terms and bookmarks are stored only in this browser’s local storage. No shared profile, account or tracking server is used. Pause stops new interest updates; Reset interests clears searches, interest weights and viewing history and discovered entries while keeping bookmarks.</p><p>When you search or open an article, your browser sends the request directly to Wikipedia. External fonts are requested from Google Fonts. Wikipedia and those external services receive normal network information such as your IP address. Clearing browser site data removes everything saved here.</p>';$('#exhibit').showModal()};
-$('#eras').replaceChildren(...[[1960,'The first connections'],[1970,'Networks find their people'],[1980,'Dial in. Log on.'],[1990,'Welcome to the web'],[2000,'Everyone has a page'],[2010,'Always connected'],[2020,'The next chapter']].map(([y,t])=>{const b=document.createElement('button');b.className='era';b.innerHTML=`<b>${y}s ↗</b><span>${t}</span>`;b.onclick=()=>{era=y;wing='All exhibits';query='';$('#search').value='';results=null;++request;$('#status').textContent='';limit=24;render();$('#collection').scrollIntoView()};return b}));render();renderSaved();recommend();
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const WIKI="https://en.wikipedia.org/w/api.php";
+const store={get(k,d){try{return JSON.parse(localStorage.getItem("im2-"+k))??d}catch{return d}},set(k,v){try{localStorage.setItem("im2-"+k,JSON.stringify(v))}catch{}}};
+let saved=store.get("saved",[]),gcfg=store.get("google",{}),thumbs={},cache=new Map();
+const toList=items=>items.map(x=>({year:x[0],title:x[1],label:x[2],desc:x[3],look:x[4]}));
+const canSpeak="speechSynthesis" in window;let tour=false,seen=store.get("seen",[]);
+const seenIn=h=>h.items.filter(i=>seen.includes(i[1])).length;
+const hue=t=>[...t].reduce((a,c)=>a+c.charCodeAt(0),0)%360;
+const wk=async(p,sig)=>{const u=new URL(WIKI);Object.entries({action:"query",format:"json",origin:"*",redirects:1,...p}).forEach(([k,v])=>u.searchParams.set(k,v));const r=await fetch(u,{signal:sig});if(!r.ok)throw new Error("Wikipedia returned "+r.status);const j=await r.json();if(j.error)throw new Error(j.error.info||"Wikipedia API error");return j};
+let discovered=store.get("found",[]),lastItems=[],resultsQ="";
+async function wsearch(q,sig){
+  try{
+    const d=await wk({generator:"search",gsrsearch:q,gsrlimit:12,prop:"pageimages|extracts",piprop:"thumbnail",pithumbsize:400,exintro:1,explaintext:1,exchars:160,exlimit:"max"},sig);
+    return Object.values(d.query?.pages||{}).sort((a,b)=>a.index-b.index).map(p=>({title:p.title,extract:p.extract||"",thumb:p.thumbnail?.source||""}));
+  }catch(e){
+    if(e.name==="AbortError")throw e;
+    const r=await fetch("https://en.wikipedia.org/w/rest.php/v1/search/page?limit=12&q="+encodeURIComponent(q),{signal:sig});
+    if(!r.ok)throw new Error("Wikipedia returned "+r.status);
+    const d=await r.json();
+    return (d.pages||[]).map(p=>({title:p.title,extract:p.description||String(p.excerpt||"").replace(/<[^>]+>/g,""),thumb:p.thumbnail?.url?"https:"+p.thumbnail.url:""}));
+  }
+}
+function addFound(items){
+  const m=new Map();[...items,...discovered.map(s=>[s.year||"",s.title,s.label,s.desc||"",s.look||""])].forEach(x=>{if(!m.has(x[1]))m.set(x[1],x)});
+  discovered=[...m.values()].slice(0,300).map(x=>({year:x[0],title:x[1],label:x[2],desc:x[3],look:x[4]}));store.set("found",discovered);
+}
+function generate(){if(!lastItems.length)return;resultsQ=lastQ;addFound(lastItems);panel.classList.remove("on");show("results")}
+const gurl=(q,x="")=>"https://www.google.com/search?"+x+"q="+encodeURIComponent(q);
+
+/* Lobby */
+function lobby(){
+  $("#halls").innerHTML=HALLS.map(h=>`<button class="door" style="--h:${h.h}" data-hall="${h.id}"><div class="era">${esc(h.era)}</div><h2>${esc(h.name)}</h2><p>${esc(h.blurb)}</p><span class="n">${seenIn(h)} of ${h.items.length} visited</span></button>`).join("")+(discovered.length?`<button class="door" style="--h:45" data-hall="found"><div class="era">Found by you</div><h2>Discovered</h2><p>Exhibits generated from your searches.</p><span class="n">${discovered.length} exhibits</span></button>`:"");
+  $("#cnt").textContent=saved.length;
+  $("#total").textContent=HALLS.reduce((n,h)=>n+h.items.length,0);
+}
+function show(id){
+  const L=$("#lobby"),H=$("#hall");
+  if(!id){lobby();L.style.display="";H.classList.remove("on");history.replaceState(null,"","#");scrollTo(0,0);return}
+  const hall=id==="results"?{id,name:`“${resultsQ}”`,era:"Generated from your search",h:45,blurb:"Every Wikipedia match became an exhibit. Walk the gallery, or find it all again in Discovered.",items:lastItems}:id==="found"?{id,name:"Discovered",era:"Found by you",h:45,blurb:"Everything your searches have turned up.",items:discovered.map(s=>[s.year||"",s.title,s.label||s.title,s.desc||"",s.look||""])}:id==="mine"?{id,name:"My collection",era:"Saved by you",h:45,blurb:saved.length?"Everything you’ve kept, in one room.":"Nothing here yet. Save an exhibit from its placard.",items:saved.map(s=>[s.year||"",s.title,s.label||s.title,s.desc||"",s.look||""])}:HALLS.find(x=>x.id===id);
+  if(!hall)return;
+  L.style.display="none";H.classList.add("on");history.replaceState(null,"","#"+id);scrollTo(0,0);
+  H.innerHTML=`<button class="back" id="bk">← Back to the lobby</button><div class="hallhead"><div style="color:var(--brass)">${esc(hall.era)}</div><h2>${esc(hall.name)}</h2><p>${esc(hall.blurb)}</p>${hall.items.some(i=>i[3])?`<button class="btn" id="tour">Start the guided tour</button>`:""}</div>
+  <div class="wall" tabindex="0" aria-label="${esc(hall.name)} exhibits">${hall.items.map((it,i)=>`<button class="piece" data-i="${i}" style="--h:${hue(it[1])}"><div class="frame"><div class="art" data-t="${esc(it[1])}">${esc(it[2])}</div></div><div class="plaque"><b>${esc(it[1].replace(/ \(.*\)/,""))}</b><br>${esc(it[0])}</div></button>`).join("")}</div>
+  <div class="floor-hint">Scroll sideways to walk the hall. Select a frame to read its placard.</div>`;
+  H.hall=hall;
+  const paint=()=>H.querySelectorAll(".art").forEach(a=>{const s=thumbs[a.dataset.t];if(s){a.style.backgroundImage=`url("${s}")`;a.classList.add("has")}});
+  paint();
+  const titles=hall.items.map(i=>i[1]).filter(t=>!thumbs[t]);
+  for(let n=0;n<titles.length;n+=50){const ch=titles.slice(n,n+50);
+    wk({prop:"pageimages",piprop:"thumbnail",pithumbsize:500,titles:ch.join("|")}).then(d=>{
+      const q=d.query||{},pg=Object.values(q.pages||{}),nm=Object.fromEntries((q.normalized||[]).map(x=>[x.from,x.to])),rd=Object.fromEntries((q.redirects||[]).map(x=>[x.from,x.to]));
+      ch.forEach(t=>{let k=nm[t]||t;k=rd[k]||k;const p=pg.find(p=>p.title===k);if(p?.thumbnail)thumbs[t]=p.thumbnail.source});
+      paint();
+    }).catch(()=>{});
+  }
+}
+
+/* Placard */
+let cur={list:[],i:0};
+async function openCard(list,i){
+  cur={list,i};const it=list[i];const dlg=$("#dlg");
+  const title=it.title;
+  dlg.innerHTML=`<div class="card" style="--h:${hue(title)}"><div class="pic" id="pic">${esc(it.label||title)}</div><div class="txt">
+  <h3>${esc(title.replace(/ \(.*\)/,""))}</h3><div class="meta">${it.year?esc(it.year)+" · ":""}Exhibit ${i+1} of ${list.length}</div>
+  ${it.desc?`<p class="curator">${esc(it.desc)}</p>`:""}${it.look?`<p class="look"><b>Look closer.</b> ${esc(it.look)}</p>`:""}
+  <div class="extract" id="ext">Loading from Wikipedia…</div>
+  <div class="acts"><a href="https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g,"_"))}" target="_blank" rel="noopener">Wikipedia</a><a href="${gurl(title)}" target="_blank" rel="noopener">Google</a><a href="${gurl(title,"tbm=nws&")}" target="_blank" rel="noopener">Google News</a><a href="https://scholar.google.com/scholar?q=${encodeURIComponent(title)}" target="_blank" rel="noopener">Scholar</a>${canSpeak&&it.desc?`<button id="ls">Listen</button>`:""}<button class="save" id="sv" aria-pressed="${saved.some(s=>s.title===title)}">Save</button></div>
+  <div class="nav"><button class="btn ghost" id="pv" ${i<1?"disabled":""}>Previous</button><button class="btn ghost" id="cl">Close</button><button class="btn ghost" id="nx" ${i>=list.length-1?"disabled":""}>Next</button></div>
+  <div class="src">Text from Wikipedia, CC BY-SA 4.0. Museum notes are original.</div></div></div>`;
+  if(!dlg.open)dlg.showModal();
+  if(canSpeak)speechSynthesis.cancel();
+  if(!seen.includes(title)){seen.push(title);store.set("seen",seen)}
+  if(tour&&it.desc)speak(it);
+  try{
+    let d=cache.get(title);
+    if(!d){const r=await wk({prop:"extracts|pageimages",exintro:1,explaintext:1,exchars:1400,piprop:"thumbnail",pithumbsize:700,titles:title});d=Object.values(r.query.pages)[0];cache.set(title,d)}
+    if(cur.list[cur.i]!==it)return;
+    $("#ext").textContent=d.extract||"No summary available. Use the links below to read more.";
+    if(d.thumbnail){const p=$("#pic");p.style.backgroundImage=`url("${d.thumbnail.source}")`;p.style.color="transparent"}
+  }catch(e){if(cur.list[cur.i]===it)$("#ext").innerHTML=`Couldn’t reach Wikipedia (${esc(e.message)}). <button class="btn ghost" id="rt">Retry</button>`}
+}
+
+function speak(it){
+  if(!canSpeak)return;speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(`${it.title.replace(/ \(.*\)/,"")}. ${it.year||""}. ${it.desc||""} ${it.look||""}`);
+  u.onend=()=>{if(tour&&cur.list[cur.i]===it){if(cur.i<cur.list.length-1)openCard(cur.list,cur.i+1);else tour=false}};
+  speechSynthesis.speak(u);
+}
+
+/* Search */
+let tab="wiki",ac,tm,lastQ="";
+const panel=$("#panel");
+function tabsHtml(){return `<div class="tabs" role="tablist"><button role="tab" data-tab="wiki" aria-selected="${tab==="wiki"}">Wikipedia</button><button role="tab" data-tab="google" aria-selected="${tab==="google"}">Google</button></div>`}
+async function search(){
+  const q=$("#q").value.trim();lastQ=q;
+  if(q.length<2){panel.classList.remove("on");return}
+  panel.classList.add("on");
+  ac?.abort();ac=new AbortController();
+  if(tab==="wiki"){
+    panel.innerHTML=tabsHtml()+`<div class="msg">Searching Wikipedia…</div>`;
+    try{
+      const rs=await wsearch(q,ac.signal);
+      rs.forEach(r=>{if(r.thumb)thumbs[r.title]=r.thumb});
+      lastItems=rs.map(r=>["",r.title,r.title,"",`Found by searching “${q}”.`]);
+      window._rs=toList(lastItems);
+      panel.innerHTML=tabsHtml()+(rs.length?`<div class="genbar"><button class="btn" id="gen">Build an exhibition from these ${rs.length} results</button></div>`+rs.map((p,i)=>`<button class="res" data-r="${i}">${p.thumb?`<img src="${esc(p.thumb)}" alt="">`:`<div class="ph"></div>`}<span><b>${esc(p.title)}</b><small>${esc(p.extract)}</small></span></button>`).join(""):`<div class="msg">No Wikipedia matches for “${esc(q)}”. Try different words or the Google tab.</div>`);
+    }catch(e){if(e.name!=="AbortError"){lastItems=[];panel.innerHTML=tabsHtml()+`<div class="msg">Couldn’t reach Wikipedia (${esc(e.message)}). ${location.protocol==="file:"?"This page was opened from a file; serve it over http(s) instead, for example with python3 -m http.server. ":"Check your connection. "}<button class="btn ghost" id="rs">Retry</button></div>`}}
+  }else{
+    const chips=`<div class="chips"><a class="chip" target="_blank" rel="noopener" href="${gurl(q)}">Google</a><a class="chip" target="_blank" rel="noopener" href="${gurl(q+" site:wikipedia.org")}">Google + Wikipedia</a><a class="chip" target="_blank" rel="noopener" href="${gurl(q,"tbm=nws&")}">News</a><a class="chip" target="_blank" rel="noopener" href="${gurl(q,"tbm=isch&")}">Images</a><a class="chip" target="_blank" rel="noopener" href="https://scholar.google.com/scholar?q=${encodeURIComponent(q)}">Scholar</a></div>`;
+    const form=`<form class="gform" id="gf"><p>${gcfg.key?"Google results are on.":"Show Google results here by adding a free Programmable Search Engine key and ID. They stay in this browser."}</p><input name="key" placeholder="API key" value="${esc(gcfg.key||"")}" autocomplete="off"><input name="cx" placeholder="Search engine ID (cx)" value="${esc(gcfg.cx||"")}" autocomplete="off"><button class="btn">Save and search</button></form>`;
+    if(!gcfg.key||!gcfg.cx){panel.innerHTML=tabsHtml()+chips+form;return}
+    panel.innerHTML=tabsHtml()+chips+`<div class="msg">Searching Google…</div>`;
+    try{
+      const r=await fetch(`https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(gcfg.key)}&cx=${encodeURIComponent(gcfg.cx)}&num=8&q=${encodeURIComponent(q)}`,{signal:ac.signal});
+      const d=await r.json();if(d.error)throw new Error(d.error.message);
+      panel.innerHTML=tabsHtml()+chips+((d.items||[]).map(x=>`<a class="res" target="_blank" rel="noopener" href="${esc(x.link)}" style="text-decoration:none;color:inherit"><div class="ph"></div><span><b>${esc(x.title)}</b><small>${esc(x.displayLink)} · ${esc(x.snippet||"")}</small></span></a>`).join("")||`<div class="msg">No Google results.</div>`)+form;
+    }catch(e){if(e.name!=="AbortError")panel.innerHTML=tabsHtml()+chips+`<div class="msg">Google search failed: ${esc(e.message)}. Check the key and engine ID.</div>`+form}
+  }
+}
+
+/* Events */
+document.addEventListener("click",e=>{
+  const t=e.target.closest("button,.res");
+  if(!e.target.closest(".search"))panel.classList.remove("on");
+  if(!t)return;
+  if(t.dataset.hall)show(t.dataset.hall);
+  else if(t.id==="home"||t.id==="bk")show();
+  else if(t.id==="enter")show(HALLS[0].id);
+  else if(t.id==="mine")show("mine");
+  else if(t.id==="tour"){tour=true;openCard(toList($("#hall").hall.items),0)}
+  else if(t.id==="rnd"){const h=HALLS[Math.random()*HALLS.length|0];openCard(toList(h.items),Math.random()*h.items.length|0)}
+  else if(t.id==="ls"){if(speechSynthesis.speaking){tour=false;speechSynthesis.cancel();t.textContent="Listen"}else{speak(cur.list[cur.i]);t.textContent="Stop"}}
+  else if(t.dataset.i!==undefined){const h=$("#hall").hall;openCard(toList(h.items),+t.dataset.i)}
+  else if(t.dataset.tab){tab=t.dataset.tab;search()}
+  else if(t.id==="gen")generate();
+  else if(t.id==="rs")search();
+  else if(t.dataset.r!==undefined){addFound([lastItems[+t.dataset.r]]);openCard(window._rs,+t.dataset.r)}
+  else if(t.id==="pv")openCard(cur.list,cur.i-1);
+  else if(t.id==="nx")openCard(cur.list,cur.i+1);
+  else if(t.id==="cl")$("#dlg").close();
+  else if(t.id==="rt")openCard(cur.list,cur.i);
+  else if(t.id==="sv"){const it=cur.list[cur.i];const has=saved.some(s=>s.title===it.title);saved=has?saved.filter(s=>s.title!==it.title):[...saved,{title:it.title,year:it.year,label:it.label,desc:it.desc,look:it.look}];store.set("saved",saved);t.setAttribute("aria-pressed",!has);$("#cnt").textContent=saved.length}
+});
+document.addEventListener("submit",e=>{if(e.target.id==="gf"){e.preventDefault();const f=new FormData(e.target);gcfg={key:f.get("key").trim(),cx:f.get("cx").trim()};store.set("google",gcfg);search()}});
+$("#q").addEventListener("input",()=>{clearTimeout(tm);tm=setTimeout(search,300)});
+$("#q").addEventListener("keydown",e=>{if(e.key==="Enter"&&tab==="wiki"){e.preventDefault();clearTimeout(tm);if($("#q").value.trim()===lastQ&&lastItems.length)generate();else search().then(generate)}});
+$("#q").addEventListener("focus",()=>{if($("#q").value.trim().length>1)panel.classList.add("on")});
+$("#dlg").addEventListener("close",()=>{tour=false;if(canSpeak)speechSynthesis.cancel()});
+$("#dlg").addEventListener("click",e=>{if(e.target===$("#dlg"))$("#dlg").close()});
+document.addEventListener("keydown",e=>{
+  const typing=/INPUT|TEXTAREA/.test(document.activeElement.tagName);
+  if(e.key==="/"&&!typing){e.preventDefault();$("#q").focus()}
+  if(e.key==="Escape")panel.classList.remove("on");
+  if($("#dlg").open&&!typing){if(e.key==="ArrowRight"&&cur.i<cur.list.length-1)openCard(cur.list,cur.i+1);if(e.key==="ArrowLeft"&&cur.i>0)openCard(cur.list,cur.i-1)}
+});
+lobby();
+const hh=location.hash.slice(1);if(hh)show(hh);
