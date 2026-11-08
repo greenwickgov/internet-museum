@@ -1,0 +1,13 @@
+:{$PORT:10000} {
+  @preflight method OPTIONS
+  handle @preflight {
+    header Access-Control-Allow-Origin "*"
+    header Access-Control-Allow-Methods "GET, OPTIONS"
+    header Access-Control-Allow-Headers "Content-Type"
+    respond "" 204
+  }
+
+  header Access-Control-Allow-Origin "*"
+  header Access-Control-Allow-Methods "GET, OPTIONS"
+  reverse_proxy 127.0.0.1:8080
+}
